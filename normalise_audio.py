@@ -294,13 +294,21 @@ def estimate_output_size_bytes(
 
 
 def build_map_and_codecs(
-    meta: dict, main_abs_index: int
+    meta: dict, main_abs_index: int, skip_subtitles: bool = False
 ) -> tuple[list[str], list[str], int]:
-    maps = ["-map", "0"]
+    if skip_subtitles:
+        # Map video and audio streams only (skip subtitles to avoid codec issues)
+        maps = ["-map", "0:v?", "-map", "0:a"]
+    else:
+        # Try to include everything
+        maps = ["-map", "0"]
+
     codecs: list[str] = []
 
-    # Copy video/subtitles/data
-    codecs += ["-c:v", "copy", "-c:s", "copy", "-c:d", "copy"]
+    # Copy video/data/subtitles
+    codecs += ["-c:v", "copy", "-c:d", "copy"]
+    if not skip_subtitles:
+        codecs += ["-c:s", "copy"]
 
     abs_to_aorder = build_audio_absindex_to_order(meta)
     if main_abs_index not in abs_to_aorder:
@@ -447,9 +455,9 @@ def estimate_output_size_and_duration(
 
 
 def apply_peak_gain(
-    src: Path, dst: Path, meta: dict, main_abs_index: int, gain_db: float, file_prefix: str = ""
+    src: Path, dst: Path, meta: dict, main_abs_index: int, gain_db: float, file_prefix: str = "", skip_subtitles: bool = False
 ) -> None:
-    maps, codecs, main_audio_order = build_map_and_codecs(meta, main_abs_index)
+    maps, codecs, main_audio_order = build_map_and_codecs(meta, main_abs_index, skip_subtitles)
     volume_filter = f"volume={gain_db:+.3f}dB"
     duration, est_out_size = estimate_output_size_and_duration(
         src, meta, main_abs_index
@@ -464,8 +472,16 @@ def apply_peak_gain(
         "-i",
         str(src),
     ]
+    # Map all streams first
+    cmd += maps
+    # Apply volume filter ONLY to the output audio stream order that corresponds to main audio
     cmd += [f"-filter:a:{main_audio_order}", volume_filter]
-    cmd += maps + codecs
+    cmd += codecs
+
+    # For .m4v files, force mp4 format to support HEVC (otherwise ffmpeg uses ipod format)
+    if src.suffix.lower() == ".m4v":
+        cmd += ["-f", "mp4"]
+
     if FASTSTART and src.suffix.lower() in {".mp4", ".m4v", ".mov"}:
         cmd += ["-movflags", "+faststart"]
     cmd += ["-progress", "pipe:1", "-nostats", str(dst)]
@@ -480,7 +496,7 @@ def apply_peak_gain(
     with subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         encoding='utf-8',
         errors='replace',
@@ -494,7 +510,22 @@ def apply_peak_gain(
 
             proc.wait(timeout=SUBPROCESS_TIMEOUT_SECONDS)
             if proc.returncode != 0:
-                raise RuntimeError("ffmpeg failed during processing")
+                stderr_output = proc.stderr.read() if proc.stderr else ""
+                # Look for actual error messages (not just "Conversion failed!")
+                error_lines = [line.strip() for line in stderr_output.split('\n') if line.strip()]
+                # Find lines with actual errors (usually contain "Error" or codec names)
+                meaningful_errors = [
+                    line for line in error_lines
+                    if any(keyword in line.lower() for keyword in ['error', 'invalid', 'cannot', 'failed', 'encoder', 'decoder', 'permission', 'not supported', 'could not'])
+                    and 'conversion failed' not in line.lower()
+                ]
+                if meaningful_errors:
+                    # Show last 3 meaningful errors for context
+                    last_error = ' | '.join(meaningful_errors[-3:])
+                else:
+                    # Fall back to last 5 lines of any output
+                    last_error = ' | '.join(error_lines[-5:]) if error_lines else "Unknown error"
+                raise RuntimeError(f"ffmpeg failed: {last_error}")
 
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -538,7 +569,24 @@ def process_file(path: Path, state: dict) -> bool:
     swap_success = False
 
     try:
-        apply_peak_gain(path, tmp_path, meta, main_abs_idx, gain_db, prefix)
+        # Try with subtitles first
+        try:
+            apply_peak_gain(path, tmp_path, meta, main_abs_idx, gain_db, prefix, skip_subtitles=False)
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            # If it's a subtitle-related error or container header issue, retry without subtitles
+            if any(keyword in error_msg for keyword in [
+                'subtitle', 'srt', 'binding an input stream', 'codec 0 is not supported',
+                'could not write header', 'function not implemented', 'incorrect codec parameters'
+            ]):
+                print(f"{prefix} ⚠ Stream compatibility issue, retrying without subtitles...")
+                # Clean up failed tmp file
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                apply_peak_gain(path, tmp_path, meta, main_abs_idx, gain_db, prefix, skip_subtitles=True)
+            else:
+                # Not a subtitle error, re-raise
+                raise
 
         if not tmp_path.exists() or tmp_path.stat().st_size < MIN_OUTPUT_FILE_SIZE_BYTES:
             raise RuntimeError("Output file looks invalid or too small")
