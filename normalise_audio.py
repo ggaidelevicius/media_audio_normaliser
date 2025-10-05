@@ -1,4 +1,10 @@
-import json, os, sys, subprocess, shlex, re, hashlib, threading, time
+import json
+import os
+import subprocess
+import re
+import hashlib
+import threading
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -65,7 +71,7 @@ def load_state(path: str) -> dict:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if not isinstance(data, dict) or "files" not in data:
-                    print(f"Warning: Invalid state file format, resetting state")
+                    print("Warning: Invalid state file format, resetting state")
                     return {"files": {}}
                 return data
         except (json.JSONDecodeError, IOError) as e:
@@ -119,10 +125,17 @@ def compute_quick_fingerprint(p: Path) -> str:
     return h.hexdigest()[:32]
 
 
-def run(cmd: list[str], timeout: int = SUBPROCESS_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str], timeout: int = SUBPROCESS_TIMEOUT_SECONDS
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        encoding='utf-8', errors='replace', timeout=timeout
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
     )
 
 
@@ -351,7 +364,9 @@ def atomic_swap_with_retry(
                     backup_path.unlink()
             except (PermissionError, OSError):
                 # If we can't delete the backup, use a unique name instead
-                backup_path = backup_path.with_suffix(backup_path.suffix + f".{int(time.time())}")
+                backup_path = backup_path.with_suffix(
+                    backup_path.suffix + f".{int(time.time())}"
+                )
 
             os.replace(final_path, backup_path)
             os.replace(tmp_path, final_path)
@@ -360,7 +375,9 @@ def atomic_swap_with_retry(
             try:
                 backup_path.unlink()
             except (PermissionError, OSError):
-                print(f"  Note: Backup file retained at {backup_path} (could not auto-delete)")
+                print(
+                    f"  Note: Backup file retained at {backup_path} (could not auto-delete)"
+                )
 
             return True
         except (PermissionError, OSError) as e:
@@ -455,9 +472,17 @@ def estimate_output_size_and_duration(
 
 
 def apply_peak_gain(
-    src: Path, dst: Path, meta: dict, main_abs_index: int, gain_db: float, file_prefix: str = "", skip_subtitles: bool = False
+    src: Path,
+    dst: Path,
+    meta: dict,
+    main_abs_index: int,
+    gain_db: float,
+    file_prefix: str = "",
+    skip_subtitles: bool = False,
 ) -> None:
-    maps, codecs, main_audio_order = build_map_and_codecs(meta, main_abs_index, skip_subtitles)
+    maps, codecs, main_audio_order = build_map_and_codecs(
+        meta, main_abs_index, skip_subtitles
+    )
     volume_filter = f"volume={gain_db:+.3f}dB"
     duration, est_out_size = estimate_output_size_and_duration(
         src, meta, main_abs_index
@@ -498,8 +523,8 @@ def apply_peak_gain(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        encoding='utf-8',
-        errors='replace',
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         creationflags=creationflags,
     ) as proc:
@@ -512,24 +537,44 @@ def apply_peak_gain(
             if proc.returncode != 0:
                 stderr_output = proc.stderr.read() if proc.stderr else ""
                 # Look for actual error messages (not just "Conversion failed!")
-                error_lines = [line.strip() for line in stderr_output.split('\n') if line.strip()]
+                error_lines = [
+                    line.strip() for line in stderr_output.split("\n") if line.strip()
+                ]
                 # Find lines with actual errors (usually contain "Error" or codec names)
                 meaningful_errors = [
-                    line for line in error_lines
-                    if any(keyword in line.lower() for keyword in ['error', 'invalid', 'cannot', 'failed', 'encoder', 'decoder', 'permission', 'not supported', 'could not'])
-                    and 'conversion failed' not in line.lower()
+                    line
+                    for line in error_lines
+                    if any(
+                        keyword in line.lower()
+                        for keyword in [
+                            "error",
+                            "invalid",
+                            "cannot",
+                            "failed",
+                            "encoder",
+                            "decoder",
+                            "permission",
+                            "not supported",
+                            "could not",
+                        ]
+                    )
+                    and "conversion failed" not in line.lower()
                 ]
                 if meaningful_errors:
                     # Show last 3 meaningful errors for context
-                    last_error = ' | '.join(meaningful_errors[-3:])
+                    last_error = " | ".join(meaningful_errors[-3:])
                 else:
                     # Fall back to last 5 lines of any output
-                    last_error = ' | '.join(error_lines[-5:]) if error_lines else "Unknown error"
+                    last_error = (
+                        " | ".join(error_lines[-5:]) if error_lines else "Unknown error"
+                    )
                 raise RuntimeError(f"ffmpeg failed: {last_error}")
 
         except subprocess.TimeoutExpired:
             proc.kill()
-            raise RuntimeError(f"ffmpeg process timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds")
+            raise RuntimeError(
+                f"ffmpeg process timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds"
+            )
 
 
 def process_file(path: Path, state: dict) -> bool:
@@ -563,7 +608,9 @@ def process_file(path: Path, state: dict) -> bool:
             save_state(STATE_FILE, state)
         return False
 
-    print(f"{prefix} ⟳ Normalizing: peak {max_peak_db:.2f} dBFS → {TARGET_PEAK_DBFS} dBFS (gain: {gain_db:+.2f} dB)")
+    print(
+        f"{prefix} ⟳ Normalizing: peak {max_peak_db:.2f} dBFS → {TARGET_PEAK_DBFS} dBFS (gain: {gain_db:+.2f} dB)"
+    )
 
     tmp_path = path.with_name(path.stem + ".normalised.tmp" + path.suffix)
     swap_success = False
@@ -571,24 +618,53 @@ def process_file(path: Path, state: dict) -> bool:
     try:
         # Try with subtitles first
         try:
-            apply_peak_gain(path, tmp_path, meta, main_abs_idx, gain_db, prefix, skip_subtitles=False)
+            apply_peak_gain(
+                path,
+                tmp_path,
+                meta,
+                main_abs_idx,
+                gain_db,
+                prefix,
+                skip_subtitles=False,
+            )
         except RuntimeError as e:
             error_msg = str(e).lower()
             # If it's a subtitle-related error or container header issue, retry without subtitles
-            if any(keyword in error_msg for keyword in [
-                'subtitle', 'srt', 'binding an input stream', 'codec 0 is not supported',
-                'could not write header', 'function not implemented', 'incorrect codec parameters'
-            ]):
-                print(f"{prefix} ⚠ Stream compatibility issue, retrying without subtitles...")
+            if any(
+                keyword in error_msg
+                for keyword in [
+                    "subtitle",
+                    "srt",
+                    "binding an input stream",
+                    "codec 0 is not supported",
+                    "could not write header",
+                    "function not implemented",
+                    "incorrect codec parameters",
+                ]
+            ):
+                print(
+                    f"{prefix} ⚠ Stream compatibility issue, retrying without subtitles..."
+                )
                 # Clean up failed tmp file
                 if tmp_path.exists():
                     tmp_path.unlink()
-                apply_peak_gain(path, tmp_path, meta, main_abs_idx, gain_db, prefix, skip_subtitles=True)
+                apply_peak_gain(
+                    path,
+                    tmp_path,
+                    meta,
+                    main_abs_idx,
+                    gain_db,
+                    prefix,
+                    skip_subtitles=True,
+                )
             else:
                 # Not a subtitle error, re-raise
                 raise
 
-        if not tmp_path.exists() or tmp_path.stat().st_size < MIN_OUTPUT_FILE_SIZE_BYTES:
+        if (
+            not tmp_path.exists()
+            or tmp_path.stat().st_size < MIN_OUTPUT_FILE_SIZE_BYTES
+        ):
             raise RuntimeError("Output file looks invalid or too small")
 
         backup = path.with_suffix(path.suffix + ".bak")
@@ -661,7 +737,9 @@ def scan_and_process():
             p, ok, err = fut.result()
             if not ok and err:
                 filename = p.name
-                prefix = f"[{filename[:40]}...]" if len(filename) > 40 else f"[{filename}]"
+                prefix = (
+                    f"[{filename[:40]}...]" if len(filename) > 40 else f"[{filename}]"
+                )
                 print(f"{prefix} ✗ Failed: {err}")
 
 
