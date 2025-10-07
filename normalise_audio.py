@@ -9,6 +9,29 @@ from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# =========================== Logging Setup ===========================
+LOG_FILE = rf"{os.path.dirname(__file__)}\log.txt" if __file__ else "log.txt"
+log_lock = threading.Lock()
+
+def log_print(*args, **kwargs):
+    """Print to console and write to log.txt with timestamp."""
+    # Print to console normally
+    print(*args, **kwargs)
+
+    # Convert args to string like print does
+    message = " ".join(str(arg) for arg in args)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_line = f"[{timestamp}] {message}\n"
+
+    # Write to log file (thread-safe)
+    with log_lock:
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(log_line)
+        except Exception:
+            pass  # Fail silently if logging fails
+# ====================================================================
+
 # =========================== Configuration ===========================
 MEDIA_BASE = r"F:\MEDIA"  # Base folder containing MOVIES and TV SHOWS
 
@@ -71,11 +94,11 @@ def load_state(path: str) -> dict:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if not isinstance(data, dict) or "files" not in data:
-                    print("Warning: Invalid state file format, resetting state")
+                    log_print("Warning: Invalid state file format, resetting state")
                     return {"files": {}}
                 return data
         except (json.JSONDecodeError, IOError) as e:
-            print(f"Warning: Could not load state file ({e}), resetting state")
+            log_print(f"Warning: Could not load state file ({e}), resetting state")
     return {
         "files": {}
     }  # { "files": { "abs_path": {"sig":"...","qfp":"...","done_at":"..."} } }
@@ -88,7 +111,7 @@ def save_state(path: str, data: dict) -> None:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
     except Exception as e:
-        print(f"Warning: Failed to save state: {e}")
+        log_print(f"Warning: Failed to save state: {e}")
         if os.path.exists(tmp):
             try:
                 os.unlink(tmp)
@@ -375,20 +398,20 @@ def atomic_swap_with_retry(
             try:
                 backup_path.unlink()
             except (PermissionError, OSError):
-                print(
+                log_print(
                     f"  Note: Backup file retained at {backup_path} (could not auto-delete)"
                 )
 
             return True
         except (PermissionError, OSError) as e:
             if not tmp_path.exists():
-                print(f"  ! Swap failed (tmp missing): {e}")
+                log_print(f"  ! Swap failed (tmp missing): {e}")
                 return False
             if attempt < retries:
                 time.sleep(backoff)
                 backoff *= 1.5
             else:
-                print(f"  ! Swap failed after {retries} attempts: {e}")
+                log_print(f"  ! Swap failed after {retries} attempts: {e}")
                 return False
 
 
@@ -409,12 +432,12 @@ def cleanup_orphan_tmps(max_age_hours: int = 0) -> None:
                     if st.st_mtime >= cutoff:
                         continue  # Skip files newer than cutoff
 
-                print(f"~ Cleaning orphan tmp: {tmp}")
+                log_print(f"~ Cleaning orphan tmp: {tmp}")
                 tmp.unlink(missing_ok=True)
             except FileNotFoundError:
                 pass
             except Exception as e:
-                print(f"~ Could not clean tmp {tmp}: {e}")
+                log_print(f"~ Could not clean tmp {tmp}: {e}")
 
 
 # ---------- Core processing ----------
@@ -581,24 +604,24 @@ def process_file(path: Path, state: dict) -> bool:
     filename = path.name
     prefix = f"[{filename[:40]}...]" if len(filename) > 40 else f"[{filename}]"
 
-    print(f"\n{prefix} Processing: {path}")
+    log_print(f"\n{prefix} Processing: {path}")
 
     meta = ffprobe_streams(path)
     main_abs_idx = find_main_audio_abs_index(meta)
     if main_abs_idx is None:
-        print(f"{prefix} ⊘ No audio stream found, skipping")
+        log_print(f"{prefix} ⊘ No audio stream found, skipping")
         return False
 
     max_peak_db = measure_max_peak_db(path, main_abs_idx)
     if max_peak_db is None:
-        print(f"{prefix} ⊘ Could not measure max peak, skipping")
+        log_print(f"{prefix} ⊘ Could not measure max peak, skipping")
         return False
 
     gain_db = TARGET_PEAK_DBFS - max_peak_db
 
     # Already at/above target? Skip but record state so we don't re-check needlessly.
     if gain_db <= 0.05:
-        print(f"{prefix} ✓ Already normalized (peak: {max_peak_db:.2f} dBFS)")
+        log_print(f"{prefix} ✓ Already normalized (peak: {max_peak_db:.2f} dBFS)")
         with state_lock:
             state["files"][str(path)] = {
                 "sig": file_signature(path),
@@ -608,7 +631,7 @@ def process_file(path: Path, state: dict) -> bool:
             save_state(STATE_FILE, state)
         return False
 
-    print(
+    log_print(
         f"{prefix} ⟳ Normalizing: peak {max_peak_db:.2f} dBFS → {TARGET_PEAK_DBFS} dBFS (gain: {gain_db:+.2f} dB)"
     )
 
@@ -642,7 +665,7 @@ def process_file(path: Path, state: dict) -> bool:
                     "incorrect codec parameters",
                 ]
             ):
-                print(
+                log_print(
                     f"{prefix} ⚠ Stream compatibility issue, retrying without subtitles..."
                 )
                 # Clean up failed tmp file
@@ -673,11 +696,11 @@ def process_file(path: Path, state: dict) -> bool:
             final_path=path, tmp_path=tmp_path, backup_path=backup
         )
         if not ok:
-            print(f"{prefix} ✗ Swap failed; tmp file retained for retry")
+            log_print(f"{prefix} ✗ Swap failed; tmp file retained for retry")
             return False
         swap_success = True
 
-        print(f"{prefix} ✓ Completed successfully")
+        log_print(f"{prefix} ✓ Completed successfully")
 
         with state_lock:
             state["files"][str(path)] = {
@@ -703,7 +726,7 @@ def scan_and_collect() -> list[Path]:
     for root_path in ROOT_DIRS:
         root = Path(root_path)
         if not root.exists():
-            print(f"Warning: root does not exist: {root}")
+            log_print(f"Warning: root does not exist: {root}")
             continue
         for p in root.rglob("*"):
             if p.is_file() and p.suffix.lower() in VIDEO_EXTS:
@@ -718,10 +741,10 @@ def scan_and_process():
     to_do = [p for p in candidates if should_process(p, state)]
 
     if not to_do:
-        print("No new or changed files to process.")
+        log_print("No new or changed files to process.")
         return
 
-    print(f"Found {len(to_do)} file(s) to normalise.")
+    log_print(f"Found {len(to_do)} file(s) to normalise.")
 
     def worker(p: Path) -> tuple[Path, bool, str | None]:
         try:
@@ -740,7 +763,7 @@ def scan_and_process():
                 prefix = (
                     f"[{filename[:40]}...]" if len(filename) > 40 else f"[{filename}]"
                 )
-                print(f"{prefix} ✗ Failed: {err}")
+                log_print(f"{prefix} ✗ Failed: {err}")
 
 
 if __name__ == "__main__":
