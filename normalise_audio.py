@@ -151,6 +151,13 @@ def compute_quick_fingerprint(p: Path) -> str:
 def run(
     cmd: list[str], timeout: int = SUBPROCESS_TIMEOUT_SECONDS
 ) -> subprocess.CompletedProcess:
+    # Suppress console window on Windows
+    creationflags = 0
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
     return subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
@@ -159,6 +166,7 @@ def run(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        creationflags=creationflags,
     )
 
 
@@ -536,9 +544,10 @@ def apply_peak_gain(
         cmd += ["-movflags", "+faststart"]
     cmd += ["-progress", "pipe:1", "-nostats", str(dst)]
 
+    # Set process priority and suppress console window
     creationflags = 0
     try:
-        creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS  # type: ignore[attr-defined]
+        creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
     except Exception:
         pass
 
