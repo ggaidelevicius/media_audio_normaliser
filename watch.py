@@ -58,30 +58,66 @@ class VideoFileHandler(FileSystemEventHandler):
         if self._is_video_file(path):
             self._add_to_pending(path)
 
+    def _is_file_ready(self, path: Path) -> bool:
+        """Check if file has finished copying by monitoring size stability."""
+        try:
+            if not path.exists():
+                return False
+
+            # Check if file is exclusively locked (still being written)
+            try:
+                with path.open('rb') as _:
+                    pass  # Just check we can open it
+            except PermissionError:
+                return False  # File is locked by another process
+
+            # Check size stability - file size should be stable for at least 3 checks
+            size1 = path.stat().st_size
+            if size1 == 0:
+                return False
+
+            time.sleep(1)
+            size2 = path.stat().st_size
+
+            if size1 != size2:
+                return False  # Still growing
+
+            time.sleep(1)
+            size3 = path.stat().st_size
+
+            return size2 == size3  # Stable for 2 seconds
+
+        except (FileNotFoundError, OSError):
+            return False
+
     def _process_pending_loop(self):
         """Background thread that processes files after they've finished writing."""
-        SETTLE_TIME = 5  # seconds to wait for file to finish writing
+        MIN_WAIT_TIME = 5  # Minimum seconds to wait before checking if ready
 
         while True:
-            time.sleep(2)  # Check every 2 seconds
+            time.sleep(3)  # Check every 3 seconds
 
             ready_to_process = []
             current_time = time.time()
 
             with self.lock:
                 for path_str, added_time in list(self.pending_files.items()):
-                    # Wait for file to "settle" (no writes for SETTLE_TIME seconds)
-                    if current_time - added_time >= SETTLE_TIME:
-                        path = Path(path_str)
+                    # Wait minimum time first
+                    if current_time - added_time < MIN_WAIT_TIME:
+                        continue
 
-                        # Verify file still exists and has content
-                        try:
-                            if path.exists() and path.stat().st_size > 0:
-                                ready_to_process.append(path)
-                            del self.pending_files[path_str]
-                        except (FileNotFoundError, OSError):
-                            # File was deleted or isn't accessible yet
-                            del self.pending_files[path_str]
+                    path = Path(path_str)
+
+                    # Check if file is ready (releases lock during check)
+                    self.lock.release()
+                    try:
+                        is_ready = self._is_file_ready(path)
+                    finally:
+                        self.lock.acquire()
+
+                    if is_ready:
+                        ready_to_process.append(path)
+                        del self.pending_files[path_str]
 
             # Process files outside the lock
             for path in ready_to_process:
