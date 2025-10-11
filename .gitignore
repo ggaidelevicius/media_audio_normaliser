@@ -3,3 +3,4 @@ MOVIES
 TV SHOWS
 .normalise_state.json
 log.txt
+__pycache__

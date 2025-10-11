@@ -414,6 +414,8 @@ def atomic_swap_with_retry(
                 log_print(f"  ! Swap failed after {retries} attempts: {e}")
                 return False
 
+    return False  # Fallback if loop exits without return
+
 
 def cleanup_orphan_tmps(max_age_hours: int = 0) -> None:
     """
@@ -553,8 +555,9 @@ def apply_peak_gain(
     ) as proc:
         try:
             # Consume output to prevent blocking but don't display it
-            for _ in proc.stdout:
-                pass
+            if proc.stdout:
+                for _ in proc.stdout:
+                    pass
 
             proc.wait(timeout=SUBPROCESS_TIMEOUT_SECONDS)
             if proc.returncode != 0:
