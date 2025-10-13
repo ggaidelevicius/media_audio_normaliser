@@ -2,6 +2,7 @@ import time
 import threading
 from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
@@ -14,6 +15,7 @@ from normalise_audio import (
     ROOT_DIRS,
     VIDEO_EXTS,
     log_print,
+    WORKERS,
 )
 
 
@@ -25,6 +27,7 @@ class VideoFileHandler(FileSystemEventHandler):
         self.pending_files = {}  # {path: last_modified_time}
         self.lock = threading.Lock()
         self.state = load_state(STATE_FILE)
+        self.executor = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="watcher")
 
         # Start background thread to process pending files
         self.processing_thread = threading.Thread(target=self._process_pending_loop, daemon=True)
@@ -97,31 +100,25 @@ class VideoFileHandler(FileSystemEventHandler):
         while True:
             time.sleep(3)  # Check every 3 seconds
 
-            ready_to_process = []
+            # Build list of candidates to check (outside main lock to avoid blocking)
+            candidates = []
             current_time = time.time()
 
             with self.lock:
                 for path_str, added_time in list(self.pending_files.items()):
-                    # Wait minimum time first
-                    if current_time - added_time < MIN_WAIT_TIME:
-                        continue
+                    if current_time - added_time >= MIN_WAIT_TIME:
+                        candidates.append(path_str)
 
-                    path = Path(path_str)
+            # Check each candidate file readiness (without holding lock)
+            for path_str in candidates:
+                path = Path(path_str)
 
-                    # Check if file is ready (releases lock during check)
-                    self.lock.release()
-                    try:
-                        is_ready = self._is_file_ready(path)
-                    finally:
-                        self.lock.acquire()
-
-                    if is_ready:
-                        ready_to_process.append(path)
-                        del self.pending_files[path_str]
-
-            # Process files outside the lock
-            for path in ready_to_process:
-                self._process_file_safe(path)
+                if self._is_file_ready(path):
+                    # Remove from pending and submit to thread pool
+                    with self.lock:
+                        if path_str in self.pending_files:  # Double-check still pending
+                            del self.pending_files[path_str]
+                            self.executor.submit(self._process_file_safe, path)
 
     def _process_file_safe(self, path: Path):
         """Process a single file with error handling."""

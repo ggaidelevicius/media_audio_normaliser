@@ -151,13 +151,6 @@ def compute_quick_fingerprint(p: Path) -> str:
 def run(
     cmd: list[str], timeout: int = SUBPROCESS_TIMEOUT_SECONDS
 ) -> subprocess.CompletedProcess:
-    # Suppress console window on Windows
-    creationflags = 0
-    try:
-        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
-
     return subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
@@ -166,7 +159,6 @@ def run(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        creationflags=creationflags,
     )
 
 
@@ -544,72 +536,67 @@ def apply_peak_gain(
         cmd += ["-movflags", "+faststart"]
     cmd += ["-progress", "pipe:1", "-nostats", str(dst)]
 
-    # Set process priority and suppress console window
+    # Set process priority
     creationflags = 0
     try:
-        creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+        creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS  # type: ignore[attr-defined]
     except Exception:
         pass
 
-    # Just wait for completion without progress spam
-    with subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        creationflags=creationflags,
-    ) as proc:
-        try:
-            # Consume output to prevent blocking but don't display it
-            if proc.stdout:
-                for _ in proc.stdout:
-                    pass
+    # Use subprocess.run() with proper I/O handling
+    try:
+        result = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            creationflags=creationflags,
+        )
 
-            proc.wait(timeout=SUBPROCESS_TIMEOUT_SECONDS)
-            if proc.returncode != 0:
-                stderr_output = proc.stderr.read() if proc.stderr else ""
-                # Look for actual error messages (not just "Conversion failed!")
-                error_lines = [
-                    line.strip() for line in stderr_output.split("\n") if line.strip()
-                ]
-                # Find lines with actual errors (usually contain "Error" or codec names)
-                meaningful_errors = [
-                    line
-                    for line in error_lines
-                    if any(
-                        keyword in line.lower()
-                        for keyword in [
-                            "error",
-                            "invalid",
-                            "cannot",
-                            "failed",
-                            "encoder",
-                            "decoder",
-                            "permission",
-                            "not supported",
-                            "could not",
-                        ]
-                    )
-                    and "conversion failed" not in line.lower()
-                ]
-                if meaningful_errors:
-                    # Show last 3 meaningful errors for context
-                    last_error = " | ".join(meaningful_errors[-3:])
-                else:
-                    # Fall back to last 5 lines of any output
-                    last_error = (
-                        " | ".join(error_lines[-5:]) if error_lines else "Unknown error"
-                    )
-                raise RuntimeError(f"ffmpeg failed: {last_error}")
+        if result.returncode != 0:
+            stderr_output = result.stderr or ""
+            # Look for actual error messages (not just "Conversion failed!")
+            error_lines = [
+                line.strip() for line in stderr_output.split("\n") if line.strip()
+            ]
+            # Find lines with actual errors (usually contain "Error" or codec names)
+            meaningful_errors = [
+                line
+                for line in error_lines
+                if any(
+                    keyword in line.lower()
+                    for keyword in [
+                        "error",
+                        "invalid",
+                        "cannot",
+                        "failed",
+                        "encoder",
+                        "decoder",
+                        "permission",
+                        "not supported",
+                        "could not",
+                    ]
+                )
+                and "conversion failed" not in line.lower()
+            ]
+            if meaningful_errors:
+                # Show last 3 meaningful errors for context
+                last_error = " | ".join(meaningful_errors[-3:])
+            else:
+                # Fall back to last 5 lines of any output
+                last_error = (
+                    " | ".join(error_lines[-5:]) if error_lines else "Unknown error"
+                )
+            raise RuntimeError(f"ffmpeg failed: {last_error}")
 
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            raise RuntimeError(
-                f"ffmpeg process timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds"
-            )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"ffmpeg process timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds"
+        )
 
 
 def process_file(path: Path, state: dict) -> bool:
