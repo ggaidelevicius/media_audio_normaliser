@@ -48,8 +48,8 @@ TARGET_PEAK_DBFS = (
     -0.1
 )  # dBFS (0.0 = full scale; -0.1 helps avoid intersample clipping)
 
-# Default bitrate for lossy encoders when re-encoding main audio
-AUDIO_BITRATE = "192k"
+# Default bitrate for lossy encoders when re-encoding main audio (used as minimum)
+DEFAULT_AUDIO_BITRATE = "192k"
 
 # Progress & container behaviour
 FASTSTART = (
@@ -105,10 +105,15 @@ def load_state(path: str) -> dict:
 
 
 def save_state(path: str, data: dict) -> None:
+    """Thread-safe state save with merge-on-write to prevent overwrites."""
     tmp = path + ".tmp"
     try:
+        # Re-load current state from disk and merge our changes
+        current_state = load_state(path)
+        current_state["files"].update(data.get("files", {}))
+
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(current_state, f, indent=2)
         os.replace(tmp, path)
     except Exception as e:
         log_print(f"Warning: Failed to save state: {e}")
@@ -261,10 +266,14 @@ CODEC_ENCODER_MAP = {
 }
 
 # Optional remap for very high-bitrate formats to something more compatible
+# Only remap codecs that are truly problematic or unsupported
 PREFER_DOWNMAP = {
-    # Comment out to keep original codec always
-    "dts": "ac3",
-    "truehd": "ac3",
+    # Keep EAC3/AC3 as-is (widely supported, efficient)
+    # "eac3": "eac3",  # Keep original
+    # "ac3": "ac3",    # Keep original
+    # Only remap truly niche formats:
+    "dts": "ac3",      # DTS → AC3 (better compatibility)
+    "truehd": "ac3",   # TrueHD → AC3 (lossless → lossy, but more compatible)
 }
 
 
@@ -329,6 +338,41 @@ def estimate_output_size_bytes(
     return max(1, input_size - est_orig_audio + est_new_audio)
 
 
+def get_audio_bitrate(stream: dict, encoder: str) -> str:
+    """Get appropriate bitrate for audio stream, preferring source bitrate."""
+    # Try to get original bitrate
+    orig_bitrate = stream.get("bit_rate")
+    if orig_bitrate:
+        try:
+            orig_bps = int(orig_bitrate)
+            # For EAC3/AC3/DTS encoders, use original bitrate (they're efficient)
+            if encoder in ("eac3", "ac3", "dca"):
+                return f"{int(orig_bps / 1000)}k"
+
+            # For AAC and other lossy: use original bitrate, but enforce channel-based minimum
+            channels = stream.get("channels", 2)
+            if channels >= 6:  # 5.1 or more
+                min_bps = 384000
+            elif channels >= 3:  # 3.0+
+                min_bps = 256000
+            else:  # Stereo or mono
+                min_bps = parse_bitrate_to_bps(DEFAULT_AUDIO_BITRATE) or 192000
+
+            target_bps = max(orig_bps, min_bps)
+            return f"{int(target_bps / 1000)}k"
+        except (ValueError, TypeError):
+            pass
+
+    # Fallback: estimate based on channels
+    channels = stream.get("channels", 2)
+    if channels >= 6:  # 5.1 or more
+        return "384k"
+    elif channels >= 3:  # 3.0+
+        return "256k"
+    else:  # Stereo or mono
+        return DEFAULT_AUDIO_BITRATE
+
+
 def build_map_and_codecs(
     meta: dict, main_abs_index: int, skip_subtitles: bool = False
 ) -> tuple[list[str], list[str], int]:
@@ -362,7 +406,8 @@ def build_map_and_codecs(
             codecs += [f"-c:a:{a_ord}", enc]
             # Bitrate for lossy encoders (ignored by PCM/FLAC/TrueHD etc.)
             if enc not in ("flac", "alac", "truehd", "pcm_s16le", "pcm_s24le"):
-                codecs += [f"-b:a:{a_ord}", AUDIO_BITRATE]
+                target_bitrate = get_audio_bitrate(s, enc)
+                codecs += [f"-b:a:{a_ord}", target_bitrate]
         else:
             codecs += [f"-c:a:{a_ord}", "copy"]
 
@@ -491,7 +536,7 @@ def estimate_output_size_and_duration(
 ) -> tuple[float, int | None]:
     duration = float(meta.get("format", {}).get("duration", 0)) or 0.0
     est_out_size = estimate_output_size_bytes(
-        src, meta, main_abs_index, AUDIO_BITRATE, duration
+        src, meta, main_abs_index, DEFAULT_AUDIO_BITRATE, duration
     )
     return duration, est_out_size
 
