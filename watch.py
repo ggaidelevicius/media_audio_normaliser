@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# Import the processing function from your existing script
 from normalise_audio import (
     process_file,
     load_state,
@@ -28,10 +27,14 @@ class VideoFileHandler(FileSystemEventHandler):
         self.pending_files = {}  # {path: last_modified_time}
         self.lock = threading.Lock()
         self.state = load_state(STATE_FILE)
-        self.executor = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="watcher")
+        self.executor = ThreadPoolExecutor(
+            max_workers=WORKERS, thread_name_prefix="watcher"
+        )
 
         # Start background thread to process pending files
-        self.processing_thread = threading.Thread(target=self._process_pending_loop, daemon=True)
+        self.processing_thread = threading.Thread(
+            target=self._process_pending_loop, daemon=True
+        )
         self.processing_thread.start()
 
     def _is_video_file(self, path: Path) -> bool:
@@ -70,7 +73,7 @@ class VideoFileHandler(FileSystemEventHandler):
 
             # Check if file is exclusively locked (still being written)
             try:
-                with path.open('rb') as _:
+                with path.open("rb") as _:
                     pass  # Just check we can open it
             except PermissionError:
                 return False  # File is locked by another process
@@ -134,19 +137,20 @@ class VideoFileHandler(FileSystemEventHandler):
             if success:
                 log_print(f"[WATCHER]  Successfully normalized: {path.name}")
             else:
-                log_print(f"[WATCHER] 9 Skipped (already normalized or no audio): {path.name}")
+                log_print(
+                    f"[WATCHER] 9 Skipped (already normalized or no audio): {path.name}"
+                )
 
         except Exception as e:
             log_print(f"[WATCHER]  Error processing {path.name}: {e}")
 
 
 def main():
-    # Check for updates before starting watcher
     check_for_updates()
 
-    log_print("\n" + "="*70)
+    log_print("\n" + "=" * 70)
     log_print("VIDEO FILE WATCHER - Audio Normalization Monitor")
-    log_print("="*70)
+    log_print("=" * 70)
     log_print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log_print("Monitoring directories:")
 
@@ -159,7 +163,7 @@ def main():
 
     log_print(f"\nWatching for file types: {', '.join(VIDEO_EXTS)}")
     log_print("Press Ctrl+C to stop\n")
-    log_print("="*70 + "\n")
+    log_print("=" * 70 + "\n")
 
     event_handler = VideoFileHandler()
     observer = Observer()

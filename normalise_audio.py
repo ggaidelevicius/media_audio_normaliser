@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 LOG_FILE = rf"{os.path.dirname(__file__)}\log.txt" if __file__ else "log.txt"
 log_lock = threading.Lock()
 
+
 def log_print(*args, **kwargs):
     """Print to console and write to log.txt with timestamp."""
     # Print to console normally
@@ -31,6 +32,8 @@ def log_print(*args, **kwargs):
                 f.write(log_line)
         except Exception:
             pass  # Fail silently if logging fails
+
+
 # ====================================================================
 
 # =========================== Configuration ===========================
@@ -79,7 +82,11 @@ MIN_OUTPUT_FILE_SIZE_BYTES = 1024  # Minimum valid output file size
 # Auto-update settings
 AUTO_UPDATE_ENABLED = True  # Set to False to disable auto-update checks
 AUTO_UPDATE_CHECK_INTERVAL_HOURS = 24  # Check for updates once per day
-AUTO_UPDATE_STATE_FILE = rf"{os.path.dirname(__file__)}\.last_update_check.json" if __file__ else ".last_update_check.json"
+AUTO_UPDATE_STATE_FILE = (
+    rf"{os.path.dirname(__file__)}\.last_update_check.json"
+    if __file__
+    else ".last_update_check.json"
+)
 
 # ====================================================================
 
@@ -169,13 +176,11 @@ def check_for_updates() -> bool:
 
     script_dir = Path(__file__).parent if __file__ else Path.cwd()
 
-    # Check if we're in a git repository
     git_dir = script_dir / ".git"
     if not git_dir.exists():
         log_print("⚠ Not a git repository, skipping auto-update check")
         return False
 
-    # Check if we should run update check (rate limiting)
     should_check = False
     update_state_path = Path(AUTO_UPDATE_STATE_FILE)
 
@@ -183,8 +188,12 @@ def check_for_updates() -> bool:
         if update_state_path.exists():
             with open(update_state_path, "r", encoding="utf-8") as f:
                 update_state = json.load(f)
-                last_check = datetime.fromisoformat(update_state.get("last_check", "2000-01-01T00:00:00Z"))
-                hours_since_check = (datetime.now(timezone.utc) - last_check).total_seconds() / 3600
+                last_check = datetime.fromisoformat(
+                    update_state.get("last_check", "2000-01-01T00:00:00Z")
+                )
+                hours_since_check = (
+                    datetime.now(timezone.utc) - last_check
+                ).total_seconds() / 3600
                 should_check = hours_since_check >= AUTO_UPDATE_CHECK_INTERVAL_HOURS
         else:
             should_check = True
@@ -194,9 +203,9 @@ def check_for_updates() -> bool:
     if not should_check:
         return False
 
-    log_print("\n" + "="*70)
+    log_print("\n" + "=" * 70)
     log_print("Checking for updates...")
-    log_print("="*70)
+    log_print("=" * 70)
 
     try:
         # Get current commit hash
@@ -205,7 +214,7 @@ def check_for_updates() -> bool:
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.returncode != 0:
             log_print("⚠ Failed to get current commit hash")
@@ -220,7 +229,7 @@ def check_for_updates() -> bool:
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
         if result.returncode != 0:
             log_print(f"⚠ Failed to fetch from remote: {result.stderr}")
@@ -234,7 +243,7 @@ def check_for_updates() -> bool:
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.returncode != 0:
             log_print("⚠ Failed to get remote commit hash")
@@ -249,7 +258,7 @@ def check_for_updates() -> bool:
         # Compare commits
         if current_commit == remote_commit:
             log_print("✓ Already up to date")
-            log_print("="*70 + "\n")
+            log_print("=" * 70 + "\n")
             return False
 
         log_print("📥 Update available!")
@@ -262,12 +271,12 @@ def check_for_updates() -> bool:
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.stdout.strip():
             log_print("⚠ Local changes detected, skipping auto-update")
             log_print("   Please commit or stash changes and update manually")
-            log_print("="*70 + "\n")
+            log_print("=" * 70 + "\n")
             return False
 
         # Pull the update
@@ -277,15 +286,15 @@ def check_for_updates() -> bool:
             cwd=script_dir,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
         )
         if result.returncode != 0:
             log_print(f"✗ Failed to pull updates: {result.stderr}")
-            log_print("="*70 + "\n")
+            log_print("=" * 70 + "\n")
             return False
 
         log_print("✓ Successfully updated to latest version!")
-        log_print("="*70)
+        log_print("=" * 70)
         log_print("🔄 Restarting script with new version...\n")
 
         # Restart the script with the same arguments
@@ -307,9 +316,7 @@ def check_for_updates() -> bool:
 def _save_update_check_timestamp():
     """Save timestamp of last update check."""
     try:
-        update_state = {
-            "last_check": datetime.now(timezone.utc).isoformat()
-        }
+        update_state = {"last_check": datetime.now(timezone.utc).isoformat()}
         with open(AUTO_UPDATE_STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(update_state, f, indent=2)
     except Exception as e:
@@ -443,8 +450,8 @@ PREFER_DOWNMAP = {
     # "eac3": "eac3",  # Keep original
     # "ac3": "ac3",    # Keep original
     # Only remap truly niche formats:
-    "dts": "ac3",      # DTS → AC3 (better compatibility)
-    "truehd": "ac3",   # TrueHD → AC3 (lossless → lossy, but more compatible)
+    "dts": "ac3",  # DTS → AC3 (better compatibility)
+    "truehd": "ac3",  # TrueHD → AC3 (lossless → lossy, but more compatible)
 }
 
 
@@ -755,7 +762,9 @@ def apply_peak_gain(
     # Set process priority and hide window
     creationflags = 0
     try:
-        creationflags = subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+        creationflags = (
+            subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW
+        )  # type: ignore[attr-defined]
     except Exception:
         pass
 
