@@ -55,7 +55,7 @@ This project consists of two main components:
 
 4. **Install Python dependencies**:
    ```bash
-   pip install watchdog
+   pip install -r requirements.txt
    ```
 
 5. **Configure the script**:
