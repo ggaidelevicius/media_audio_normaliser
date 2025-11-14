@@ -37,7 +37,7 @@ This project consists of two main components:
 
 2. **Clone or download this repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/ggaidelevicius/media_audio_normaliser.git
    cd media_audio_normaliser
    ```
 
