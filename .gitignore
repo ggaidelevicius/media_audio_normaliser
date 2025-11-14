@@ -5,3 +5,4 @@ TV SHOWS
 log.txt
 __pycache__
 .ruff_cache
+.last_update_check.json
