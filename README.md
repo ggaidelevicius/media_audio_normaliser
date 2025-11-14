@@ -44,13 +44,13 @@ This project consists of two main components:
 3. **Set up Python virtual environment**:
    ```bash
    # Create virtual environment
-   python -m venv venv
+   python -m venv .venv
 
    # Activate virtual environment
    # On Windows:
-   venv\Scripts\activate
+   .venv\Scripts\activate
    # On macOS/Linux:
-   source venv/bin/activate
+   source .venv/bin/activate
    ```
 
 4. **Install Python dependencies**:
