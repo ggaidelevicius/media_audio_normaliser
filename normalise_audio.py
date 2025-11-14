@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # =========================== Logging Setup ===========================
-LOG_FILE = rf"{os.path.dirname(__file__)}\log.txt" if __file__ else "log.txt"
+LOG_FILE = os.path.join(os.path.dirname(__file__), "log.txt") if __file__ else "log.txt"
 log_lock = threading.Lock()
 
 
@@ -40,11 +40,11 @@ def log_print(*args, **kwargs):
 MEDIA_BASE = r"F:\MEDIA"  # Base folder containing MOVIES and TV SHOWS
 
 ROOT_DIRS = [
-    rf"{MEDIA_BASE}\MOVIES",
-    rf"{MEDIA_BASE}\TV SHOWS",
+    os.path.join(MEDIA_BASE, "MOVIES"),
+    os.path.join(MEDIA_BASE, "TV SHOWS"),
 ]
 
-STATE_FILE = rf"{MEDIA_BASE}\.normalise_state.json"  # Tracks processed files
+STATE_FILE = os.path.join(MEDIA_BASE, ".normalise_state.json")  # Tracks processed files
 VIDEO_EXTS = {".mkv", ".mp4", ".mov", ".m4v"}
 
 # Peak normalisation target (sample peak, not loudness)
@@ -83,7 +83,7 @@ MIN_OUTPUT_FILE_SIZE_BYTES = 1024  # Minimum valid output file size
 AUTO_UPDATE_ENABLED = True  # Set to False to disable auto-update checks
 AUTO_UPDATE_CHECK_INTERVAL_HOURS = 24  # Check for updates once per day
 AUTO_UPDATE_STATE_FILE = (
-    rf"{os.path.dirname(__file__)}\.last_update_check.json"
+    os.path.join(os.path.dirname(__file__), ".last_update_check.json")
     if __file__
     else ".last_update_check.json"
 )
