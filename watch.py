@@ -16,6 +16,7 @@ from normalise_audio import (
     VIDEO_EXTS,
     log_print,
     WORKERS,
+    check_for_updates,
 )
 
 
@@ -140,6 +141,9 @@ class VideoFileHandler(FileSystemEventHandler):
 
 
 def main():
+    # Check for updates before starting watcher
+    check_for_updates()
+
     log_print("\n" + "="*70)
     log_print("VIDEO FILE WATCHER - Audio Normalization Monitor")
     log_print("="*70)

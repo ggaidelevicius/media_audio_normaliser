@@ -19,6 +19,7 @@ This project consists of two main components:
 - **Automatic retry logic** with fallback for subtitle/codec issues
 - **Real-time monitoring** for new files added to watched directories
 - **Comprehensive logging** to file and console
+- **Auto-update capability** that checks for and pulls updates from the repository
 
 ## Requirements
 
@@ -189,6 +190,27 @@ Key settings in [normalise_audio.py](normalise_audio.py):
 | `SKIP_SAMPLES` | True | Skip small/sample files |
 | `MIN_FILE_SIZE_BYTES` | 50 MB | Minimum file size to process |
 | `FASTSTART` | True | Enable MP4 faststart (streaming optimization) |
+| `AUTO_UPDATE_ENABLED` | True | Enable automatic update checks |
+| `AUTO_UPDATE_CHECK_INTERVAL_HOURS` | 24 | How often to check for updates |
+
+## Auto-Update Feature
+
+The scripts include built-in auto-update functionality that keeps your installation current:
+
+- **Automatic checks**: Once every 24 hours (configurable), the script checks for updates
+- **Safe updates**: Only pulls if there are no local changes to avoid conflicts
+- **Automatic restart**: After a successful update, the script restarts automatically
+- **Rate limiting**: Uses a timestamp file to avoid excessive remote checks
+
+### How it works:
+1. On startup, checks if 24 hours have passed since last check
+2. Fetches latest commits from the remote repository
+3. Compares local commit with remote commit
+4. If update available and no local changes, pulls the update
+5. Automatically restarts the script with the new version
+
+### Disabling auto-update:
+Set `AUTO_UPDATE_ENABLED = False` in [normalise_audio.py](normalise_audio.py) line 80.
 
 ## How It Works
 

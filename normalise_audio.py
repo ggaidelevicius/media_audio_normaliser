@@ -5,6 +5,7 @@ import re
 import hashlib
 import threading
 import time
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -74,6 +75,11 @@ MIN_FILE_SIZE_BYTES = 50 * 1024 * 1024  # skip < 50 MB if SKIP_SAMPLES
 # Timeouts and validation thresholds
 SUBPROCESS_TIMEOUT_SECONDS = 3600  # 1 hour max per subprocess call
 MIN_OUTPUT_FILE_SIZE_BYTES = 1024  # Minimum valid output file size
+
+# Auto-update settings
+AUTO_UPDATE_ENABLED = True  # Set to False to disable auto-update checks
+AUTO_UPDATE_CHECK_INTERVAL_HOURS = 24  # Check for updates once per day
+AUTO_UPDATE_STATE_FILE = rf"{os.path.dirname(__file__)}\.last_update_check.json" if __file__ else ".last_update_check.json"
 
 # ====================================================================
 
@@ -151,6 +157,163 @@ def compute_quick_fingerprint(p: Path) -> str:
         f.seek(tail_start)
         h.update(f.read(min(block_size, max(0, size - tail_start))))
     return h.hexdigest()[:32]
+
+
+def check_for_updates() -> bool:
+    """
+    Check if updates are available and pull them if so.
+    Returns True if update was performed (requires restart), False otherwise.
+    """
+    if not AUTO_UPDATE_ENABLED:
+        return False
+
+    script_dir = Path(__file__).parent if __file__ else Path.cwd()
+
+    # Check if we're in a git repository
+    git_dir = script_dir / ".git"
+    if not git_dir.exists():
+        log_print("⚠ Not a git repository, skipping auto-update check")
+        return False
+
+    # Check if we should run update check (rate limiting)
+    should_check = False
+    update_state_path = Path(AUTO_UPDATE_STATE_FILE)
+
+    try:
+        if update_state_path.exists():
+            with open(update_state_path, "r", encoding="utf-8") as f:
+                update_state = json.load(f)
+                last_check = datetime.fromisoformat(update_state.get("last_check", "2000-01-01T00:00:00Z"))
+                hours_since_check = (datetime.now(timezone.utc) - last_check).total_seconds() / 3600
+                should_check = hours_since_check >= AUTO_UPDATE_CHECK_INTERVAL_HOURS
+        else:
+            should_check = True
+    except (json.JSONDecodeError, ValueError, KeyError):
+        should_check = True
+
+    if not should_check:
+        return False
+
+    log_print("\n" + "="*70)
+    log_print("Checking for updates...")
+    log_print("="*70)
+
+    try:
+        # Get current commit hash
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode != 0:
+            log_print("⚠ Failed to get current commit hash")
+            return False
+
+        current_commit = result.stdout.strip()
+
+        # Fetch latest from remote
+        log_print("Fetching latest changes from remote...")
+        result = subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode != 0:
+            log_print(f"⚠ Failed to fetch from remote: {result.stderr}")
+            # Update timestamp even on failure to avoid hammering the remote
+            _save_update_check_timestamp()
+            return False
+
+        # Get remote commit hash
+        result = subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode != 0:
+            log_print("⚠ Failed to get remote commit hash")
+            _save_update_check_timestamp()
+            return False
+
+        remote_commit = result.stdout.strip()
+
+        # Save check timestamp
+        _save_update_check_timestamp()
+
+        # Compare commits
+        if current_commit == remote_commit:
+            log_print("✓ Already up to date")
+            log_print("="*70 + "\n")
+            return False
+
+        log_print("📥 Update available!")
+        log_print(f"   Current: {current_commit[:8]}")
+        log_print(f"   Remote:  {remote_commit[:8]}")
+
+        # Check for local changes that would prevent pull
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.stdout.strip():
+            log_print("⚠ Local changes detected, skipping auto-update")
+            log_print("   Please commit or stash changes and update manually")
+            log_print("="*70 + "\n")
+            return False
+
+        # Pull the update
+        log_print("Pulling updates...")
+        result = subprocess.run(
+            ["git", "pull", "origin"],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode != 0:
+            log_print(f"✗ Failed to pull updates: {result.stderr}")
+            log_print("="*70 + "\n")
+            return False
+
+        log_print("✓ Successfully updated to latest version!")
+        log_print("="*70)
+        log_print("🔄 Restarting script with new version...\n")
+
+        # Restart the script with the same arguments
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        # This line will never be reached if execv succeeds
+        return True
+
+    except subprocess.TimeoutExpired:
+        log_print("⚠ Update check timed out")
+        _save_update_check_timestamp()
+        return False
+    except Exception as e:
+        log_print(f"⚠ Update check failed: {e}")
+        _save_update_check_timestamp()
+        return False
+
+
+def _save_update_check_timestamp():
+    """Save timestamp of last update check."""
+    try:
+        update_state = {
+            "last_check": datetime.now(timezone.utc).isoformat()
+        }
+        with open(AUTO_UPDATE_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(update_state, f, indent=2)
+    except Exception as e:
+        log_print(f"Warning: Failed to save update check timestamp: {e}")
 
 
 def run(
@@ -819,4 +982,8 @@ def scan_and_process():
 
 
 if __name__ == "__main__":
+    # Check for updates before processing
+    check_for_updates()
+
+    # Process files
     scan_and_process()
